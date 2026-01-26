@@ -64,7 +64,8 @@ def display_files_found(files: List[Dict[str, any]]) -> None:
         print("No message files found.")
         return
 
-    print(f"Found {len(files)} message files:\n")
+    print(f"Found {len(files)} message files:")
+    print()
     print(f"{'#':<5} {'Filename':<40} {'Type':<8}")
     print("-" * 70)
 
@@ -81,14 +82,16 @@ def main():
     messages_dir = Path(__file__).parent.parent / 'data' / 'messages'
     
     print(f"Scanning directory: {messages_dir}")
-    print(f"Supported formats: {SUPPORTED_FORMATS}\n")
+    print(f"Supported formats: {SUPPORTED_FORMATS}")
+    print()
     
     try:
         files = scan_message_directory(str(messages_dir))
         display_files_found(files)
     except FileNotFoundError as e:
         print(f"Error: {e}")
-        print(f"\nPlease create the directory and add some message files:")
+        print()
+        print(f"Please create the directory and add some message files:")
         print(f" mkdir -p {messages_dir}")
         return
     
