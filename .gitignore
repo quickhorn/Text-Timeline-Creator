@@ -1,0 +1,8 @@
+/node_modules
+/dist
+.env
+__pycache__
+venv
+*.pyc
+output/*.docx
+.DS_Store
