@@ -33,19 +33,21 @@ def scan_message_directory(directory_path: str) -> List[Dict[str, any]]:
     filesFound = []
 
     for file_path, dirs, files in directory.walk():
+        #print(f"file_path: {file_path}. directories: {dirs}. files: {files}")
         for file in files:
-            pFile = Path(file)
-            if pFile.name.startswith('.'):
+            pathFile = Path(file)
+            if pathFile.name.startswith('.'):
                 continue
 
-            extension = pFile.suffix.lower()
+            extension = pathFile.suffix.lower()
 
             if extension in SUPPORTED_FORMATS:
                 file_info = {
-                    'filepath': pFile,
-                    'filename': pFile.name,
+                    'filepath': file_path,
+                    'filename': pathFile.name,
                     'extension': extension
                 }
+                print
                 filesFound.append(file_info)
         
 
@@ -66,12 +68,13 @@ def display_files_found(files: List[Dict[str, any]]) -> None:
 
     print(f"Found {len(files)} message files:")
     print()
-    print(f"{'#':<5} {'Filename':<40} {'Type':<8}")
+    print(f"{'#':<5} {'Filename':<40} {'Filepath':<80}")
     print("-" * 70)
 
     for index, file_info in enumerate(files, start=1):
+        print(f"FileInfo: ")
         print(f"{index:<5} {file_info['filename']:<40} "
-            f"{file_info['extension']:<8}")
+            f"{file_info['filepath']}")
     
     print()
 
@@ -79,7 +82,7 @@ def main():
     """
     Test function - run this module directly to test it.
     """
-    messages_dir = Path(__file__).parent.parent / 'data' / 'messages'
+    messages_dir = Path(__file__).parent.parent / 'data' / 'test_messages'
     
     print(f"Scanning directory: {messages_dir}")
     print(f"Supported formats: {SUPPORTED_FORMATS}")
