@@ -6,10 +6,12 @@ Handles extracting text from images and PDFs using Azure Document Intelligence.
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict, List
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
 import time
+
+from src.models import FileInfo, ExtractionResult
 
 class TextExtractor:
     """
@@ -35,7 +37,7 @@ class TextExtractor:
 
         print(f"✅ Connected to Azure Document Intelligence")
 
-    def extract_text_from_file(self, file_path: Path) -> Dict[str, Any]:
+    def extract_text_from_file(self, file_path: Path) -> ExtractionResult:
         """
         Extract text from a file (image or PDF) using Azure Document Intelligence.
 
@@ -43,21 +45,8 @@ class TextExtractor:
             file_path: Path to the file to extract text from
 
         Returns:
-            Dictionary containing extracted text and metadata
-            {
-                'success': bool,
-                'text': str (full extracted text),
-                'page_count': int,
-                'error': str (if success is False)
-            }
+            ExtractionResult with success status, extracted text, page count, and any error
         """
-        result = {
-            'success': False,
-            'text': '',
-            'page_count': 0,
-            'error': ''
-        }
-
         try:
             print(f"  Processing: {file_path}...", end=' ')
 
@@ -74,41 +63,31 @@ class TextExtractor:
             full_text = analysis_result.content
             page_count = len(analysis_result.pages)
 
-            result['success'] = True
-            result['text'] = full_text
-            result['page_count'] = page_count
-
             print(f"✅ ({page_count} page(s), {len(full_text)} characters)")
+            return ExtractionResult(
+                success=True,
+                text=full_text,
+                page_count=page_count
+            )
         except FileNotFoundError:
             error_msg = f"File not found: {file_path}"
-            result['error'] = error_msg
             print(f"x {error_msg}")
+            return ExtractionResult(success=False, error=error_msg)
 
         except Exception as e:
             error_msg = f"Error processing file: {str(e)}"
-            result['error'] = error_msg
             print(f"x {error_msg}")
+            return ExtractionResult(success=False, error=error_msg)
 
-        return result
-
-    def extract_text_from_files(self, file_list: list) -> Dict[str, Dict]:
+    def extract_text_from_files(self, file_list: List[FileInfo]) -> Dict[str, ExtractionResult]:
         """
         Extract text from multiple files.
 
         Args:
-            file_list: List of file dictionaries from file_scanner
+            file_list: List of FileInfo objects from file_scanner
 
         Returns:
-            Dictionary mapping filepath to extraction results:
-            {
-                '/path/to/file.jpg': {
-                    'success': True,
-                    'text': '...',
-                    'page_count': 1,
-                    'error': None
-                },
-                ...
-            }
+            Dictionary mapping filename to ExtractionResult
         """
         results = {}
         total_files = len(file_list)
@@ -117,22 +96,19 @@ class TextExtractor:
         print("-" * 70)
 
         for index, file_info in enumerate(file_list, start=1):
-            file_path = file_info['filepath']
-            file_name = file_info['filename']
-
             print(f"[{index}/{total_files}] ", end='')
 
             #Extract text from this file
-            extraction_result = self.extract_text_from_file(Path.joinpath(file_path, file_name))
+            extraction_result = self.extract_text_from_file(file_info.full_path)
 
-            #store result with filepath as key
-            results[str(file_name)] = extraction_result
+            #store result with filename as key
+            results[file_info.filename] = extraction_result
 
             #small delay to avoid hitting API rate limits
             if index < total_files:
                 time.sleep(0.7)
 
-        successful = sum(1 for r in results.values() if r['success'])
+        successful = sum(1 for r in results.values() if r.success)
         failed = total_files - successful
 
         print("-" * 70)
@@ -177,11 +153,11 @@ def main():
     print("Extracted text:")
     print("=" * 70)
     for filename, result in results.items():
-        if result['success']:
-            text = result['text'].replace('\n', ' ')
+        if result.success:
+            text = result.text.replace('\n', ' ')
             print(f"\n{filename}:")
             print(f" {text}")
-            print(f" (Total: {len(result['text'])} characters)")
+            print(f" (Total: {len(result.text)} characters)")
 
 if __name__ == "__main__":
     main()

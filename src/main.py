@@ -70,7 +70,7 @@ def main():
     results = extractor.extract_text_from_files(message_files)
 
     # Report results
-    successful = sum(1 for r in results.values() if r['success'])
+    successful = sum(1 for r in results.values() if r.success)
     failed = len(results) - successful
 
     if successful == 0:
