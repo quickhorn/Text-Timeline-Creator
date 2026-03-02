@@ -6,7 +6,7 @@ Handles extracting text from images and PDFs using Azure Document Intelligence.
 
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
 import time
@@ -19,7 +19,7 @@ class TextExtractor:
     def __init__(self, endpoint: str, key: str):
         """
         Initialize the text extractor with Azure credentials.
-        
+
         Args:
             endpoint: Azure Document Intelligence endpoint
             key: Azure Document Intelligence key
@@ -29,19 +29,19 @@ class TextExtractor:
 
         credential = AzureKeyCredential(self.key)
         self.client = DocumentAnalysisClient(
-            endpoint=self.endpoint, 
+            endpoint=self.endpoint,
             credential=credential
         )
 
         print(f"✅ Connected to Azure Document Intelligence")
-        
-    def extract_text_from_file(self, file_path: Path) -> Dict[str, any]:
+
+    def extract_text_from_file(self, file_path: Path) -> Dict[str, Any]:
         """
         Extract text from a file (image or PDF) using Azure Document Intelligence.
-        
+
         Args:
             file_path: Path to the file to extract text from
-            
+
         Returns:
             Dictionary containing extracted text and metadata
             {
@@ -57,7 +57,7 @@ class TextExtractor:
             'page_count': 0,
             'error': ''
         }
-        
+
         try:
             print(f"  Processing: {file_path}...", end=' ')
 
@@ -83,21 +83,21 @@ class TextExtractor:
             error_msg = f"File not found: {file_path}"
             result['error'] = error_msg
             print(f"x {error_msg}")
-    
+
         except Exception as e:
             error_msg = f"Error processing file: {str(e)}"
             result['error'] = error_msg
             print(f"x {error_msg}")
-            
+
         return result
 
     def extract_text_from_files(self, file_list: list) -> Dict[str, Dict]:
         """
         Extract text from multiple files.
-        
+
         Args:
             file_list: List of file dictionaries from file_scanner
-            
+
         Returns:
             Dictionary mapping filepath to extraction results:
             {
@@ -132,7 +132,7 @@ class TextExtractor:
             if index < total_files:
                 time.sleep(0.7)
 
-        successful = sum(1 for r in results.values()if r['success'])
+        successful = sum(1 for r in results.values() if r['success'])
         failed = total_files - successful
 
         print("-" * 70)
@@ -146,7 +146,7 @@ def main():
     Test function for text extraction
     """
     from dotenv import load_dotenv
-    from file_scanner import scan_message_directory
+    from src.file_scanner import scan_message_directory
 
     # load environment variables
     load_dotenv()
@@ -168,7 +168,7 @@ def main():
     if not files:
         print("No files found to process")
         return
-    
+
     #extract text
     results = extractor.extract_text_from_files(files)
 
@@ -178,7 +178,6 @@ def main():
     print("=" * 70)
     for filename, result in results.items():
         if result['success']:
-            filename = filename
             text = result['text'].replace('\n', ' ')
             print(f"\n{filename}:")
             print(f" {text}")
