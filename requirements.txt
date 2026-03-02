@@ -1,12 +1,12 @@
-# Week 1: Basic dependencies
-pathlib
-
-# Week 2: Azure and OCR
+# Azure and OCR
 azure-ai-formrecognizer==3.3.0
 python-dotenv==1.0.0
 
-# Week 4: Word export
+# Word export
 python-docx==1.1.0
+
+# Testing
+pytest==8.3.4
 
 # Optional: helpful for debugging
 colorama==0.4.6
