@@ -5,9 +5,11 @@ Main application file that processes message files and creates a timeline.
 """
 
 import os
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 from src.file_scanner import scan_message_directory, display_files_found
+from src.text_extractor import TextExtractor
 
 def main():
     """
@@ -54,9 +56,23 @@ def main():
         print("Please ensure you have message files in the 'data/messages' directory.")
         return
     
-    # TODO: Process files and create timeline
-    print("Processing files...")
-    # ... rest of processing logic
-    
+    # Extract text from the message files using Azure OCR
+    extractor = TextExtractor(endpoint, key)
+    results = extractor.extract_text_from_files(message_files)
+
+    # Report results
+    successful = sum(1 for r in results.values() if r['success'])
+    failed = len(results) - successful
+
+    if successful == 0:
+        print("No text was successfully extracted from any files.")
+        return
+
+    print(f"Extracted text from {successful} file(s) ({failed} failed)")
+    print()
+
+    # TODO: Build timeline from extracted text
+    # TODO: Export timeline to DOCX
+
 if __name__ == "__main__":
     main()
