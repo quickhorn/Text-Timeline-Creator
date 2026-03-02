@@ -5,9 +5,11 @@ Main application file that processes message files and creates a timeline.
 """
 
 import os
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 from src.file_scanner import scan_message_directory, display_files_found
+from src.text_extractor import TextExtractor
 
 def main():
     """
@@ -34,8 +36,17 @@ def main():
     print("✅ Azure credentials loaded successfully!")
     print()
 
-    #TODO: Let's make this configurable as quickly as possible
-    messages_dir = Path(__file__).parent/ 'data' / 'messages'
+    parser = argparse.ArgumentParser(description="Text Message Timeline Generator")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=Path("data/messages"),
+        type=Path,
+        help="Path to the directory containing message files (default: data/messages)"
+    )
+    args = parser.parse_args()
+
+    messages_dir = args.directory
 
     print(f"Looking for message files in: {messages_dir}")
     print()
@@ -51,12 +62,26 @@ def main():
     
     if not message_files:
         print("No message files found!")
-        print("Please ensure you have message files in the 'data/messages' directory.")
+        print(f"Please ensure you have message files in: {messages_dir}")
         return
     
-    # TODO: Process files and create timeline
-    print("Processing files...")
-    # ... rest of processing logic
-    
+    # Extract text from the message files using Azure OCR
+    extractor = TextExtractor(endpoint, key)
+    results = extractor.extract_text_from_files(message_files)
+
+    # Report results
+    successful = sum(1 for r in results.values() if r['success'])
+    failed = len(results) - successful
+
+    if successful == 0:
+        print("No text was successfully extracted from any files.")
+        return
+
+    print(f"Extracted text from {successful} file(s) ({failed} failed)")
+    print()
+
+    # TODO: Build timeline from extracted text
+    # TODO: Export timeline to DOCX
+
 if __name__ == "__main__":
     main()

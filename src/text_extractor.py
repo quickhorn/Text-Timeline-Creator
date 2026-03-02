@@ -79,7 +79,6 @@ class TextExtractor:
             result['page_count'] = page_count
 
             print(f"✅ ({page_count} page(s), {len(full_text)} characters)")
-            print(f"Result {result['text']}")
         except FileNotFoundError:
             error_msg = f"File not found: {file_path}"
             result['error'] = error_msg
@@ -118,7 +117,6 @@ class TextExtractor:
         print("-" * 70)
 
         for index, file_info in enumerate(file_list, start=1):
-            print(f"File Info {file_info}")
             file_path = file_info['filepath']
             file_name = file_info['filename']
 
@@ -133,8 +131,7 @@ class TextExtractor:
             #small delay to avoid hitting API rate limits
             if index < total_files:
                 time.sleep(0.7)
-        
-        print(f"Results: {results}")
+
         successful = sum(1 for r in results.values()if r['success'])
         failed = total_files - successful
 
