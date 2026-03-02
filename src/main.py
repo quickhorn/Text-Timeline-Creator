@@ -36,8 +36,17 @@ def main():
     print("✅ Azure credentials loaded successfully!")
     print()
 
-    #TODO: Let's make this configurable as quickly as possible
-    messages_dir = Path(__file__).parent/ 'data' / 'messages'
+    parser = argparse.ArgumentParser(description="Text Message Timeline Generator")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=Path("data/messages"),
+        type=Path,
+        help="Path to the directory containing message files (default: data/messages)"
+    )
+    args = parser.parse_args()
+
+    messages_dir = args.directory
 
     print(f"Looking for message files in: {messages_dir}")
     print()
@@ -53,7 +62,7 @@ def main():
     
     if not message_files:
         print("No message files found!")
-        print("Please ensure you have message files in the 'data/messages' directory.")
+        print(f"Please ensure you have message files in: {messages_dir}")
         return
     
     # Extract text from the message files using Azure OCR
