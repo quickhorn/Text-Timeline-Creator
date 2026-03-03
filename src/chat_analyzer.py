@@ -3,8 +3,6 @@ Chat Analyzer Module
 
 Sends messaging screenshots to Claude Vision API and gets back structured
 conversation data with speaker identification and message text.
-
-Replaces the Azure OCR path (text_extractor.py) for chat screenshots.
 """
 
 import base64
@@ -20,7 +18,7 @@ from src.models import ChatAnalysisResult, ChatMessage, FileInfo
 
 logger = logging.getLogger(__name__)
 
-# Retry settings (same pattern as text_extractor.py)
+# Retry settings for transient API failures
 MAX_RETRIES = 3
 INITIAL_RETRY_DELAY = 2
 BACKOFF_MULTIPLIER = 2

@@ -25,8 +25,7 @@ class FileInfo:
 
 @dataclass
 class ExtractionResult:
-    """Represents the result of extracting text from a single file.
-    Used by the legacy Azure OCR path (text_extractor.py)."""
+    """Represents the result of extracting text from a single file."""
     success: bool
     text: str = ''
     page_count: int = 0

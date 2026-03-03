@@ -33,7 +33,7 @@ def review_extractions(
     - Lets the user confirm, override, or skip
 
     Args:
-        results: Dictionary mapping filename to ExtractionResult (from TextExtractor)
+        results: Dictionary mapping filename to ExtractionResult
         file_list: List of FileInfo objects for resolving full file paths
                    (used to embed source images in the DOCX export)
 

@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from src.file_scanner import scan_message_directory, display_files_found
-from src.text_extractor import TextExtractor
 from src.review import review_extractions
 from src.timeline_builder import build_timeline
 from src.docx_exporter import export_timeline
