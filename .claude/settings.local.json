@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C \"c:\\\\Sandbox\\\\Text-Timeline-Creator\" log --oneline -20)"
+      "Bash(git -C \"c:\\\\Sandbox\\\\Text-Timeline-Creator\" log --oneline -20)",
+      "Bash(python:*)"
     ]
   }
 }

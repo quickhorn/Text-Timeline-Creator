@@ -11,6 +11,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from src.file_scanner import scan_message_directory, display_files_found
 from src.text_extractor import TextExtractor
+from src.review import review_extractions
+from src.timeline_builder import build_timeline
+from src.docx_exporter import export_timeline
 
 # Configure logging for the entire application
 logging.basicConfig(
@@ -85,8 +88,20 @@ def main():
 
     logger.info(f"Extracted text from {successful} file(s) ({failed} failed)")
 
-    # TODO: Build timeline from extracted text
-    # TODO: Export timeline to DOCX
+    # Review dates with user
+    messages = review_extractions(results, message_files)
+
+    if not messages:
+        logger.warning("No messages to build a timeline from.")
+        return
+
+    # Build chronological timeline
+    timeline = build_timeline(messages)
+
+    # Export to DOCX
+    output_dir = Path("output")
+    output_path = export_timeline(timeline, output_dir)
+    logger.info(f"Done! Timeline saved to: {output_path}")
 
 if __name__ == "__main__":
     main()

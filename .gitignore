@@ -7,3 +7,4 @@ venv
 output/*.docx
 .DS_Store
 /data
+*.egg-info
