@@ -2,18 +2,22 @@
 
 ## Context
 
-The Text Timeline Creator is a Python pipeline that processes message screenshots/PDFs via Azure OCR to build chronological timelines. The user wants to productize this for family law firms, where clients upload documents to SharePoint Online. The current codebase (~380 lines across 3 files) has the first two pipeline stages working (scan + extract) but has bugs, no package structure, no tests, and two pipeline stages still unbuilt. Now — while the codebase is small — is the ideal time to refactor before building more on a shaky foundation.
+The Text Timeline Creator is a Python pipeline that processes message screenshots/PDFs into chronological timelines for family law firms. Phases 1 (Refactor & Stabilize) and 2 (Core Pipeline MVP) are complete — the pipeline scans files, extracts text via Azure OCR, reviews dates with the user, builds a timeline, and exports to DOCX. 66 tests pass.
+
+**The problem:** Azure OCR returns flat text with no speaker identification or message boundaries. A screenshot with 6 messages from 2 people comes back as one blob. We lose who said what.
+
+**The solution:** Replace Azure OCR with Claude Vision API, which understands chat UI layout and returns structured `Speaker: message` pairs directly.
 
 ## Architecture Target
 
 ```
 SharePoint Online / Local Dir
          |
-   [File Source Abstraction]
+   [File Scanner]
          |
-   [Text Extraction]  ←─  Azure Doc Intelligence (images/PDFs)
-         |                 Azure Speech Services (audio files)
-   [Date Extraction + User Review]
+   [Chat Analyzer]  <--  Claude Vision API (screenshots -> structured messages)
+         |                Azure Speech Services (audio -> transcription, future)
+   [Date Confirmation + User Review]
          |
    [Timeline Builder]
          |
@@ -22,145 +26,249 @@ SharePoint Online / Local Dir
 
 ---
 
-## Phase 1: Refactor & Stabilize (Foundation)
+## Phase 1: Refactor & Stabilize -- COMPLETE
 
-**Why first:** The codebase has bugs that will compound as we add features. Fixing ~380 lines now is cheap. Fixing 2,000 lines later is painful.
+Fixed bugs, added package structure (pyproject.toml, src/__init__.py), created data models
+(FileInfo, ExtractionResult, DateMatch), replaced print() with logging, added pytest with
+test_file_scanner.py and test_models.py.
 
-### 1a. Fix existing bugs
-- `src/file_scanner.py:50` — orphaned `print` (bare `print` without parens, does nothing)
-- `src/file_scanner.py:19,56` — `any` → `Any` (lowercase `any` is the builtin function, not a type hint)
-- `src/file_scanner.py:33,38` — `filesFound`/`pathFile` → `files_found`/`path_file` (Python convention is snake_case)
-- `src/text_extractor.py:135` — missing space `values()if` → `values() if`
-- `src/text_extractor.py:149` — `from file_scanner` → `from src.file_scanner` (broken when run as module)
-- `src/text_extractor.py:181` — `filename = filename` (no-op, remove)
-- `src/file_scanner.py:75` — stray `print(f"FileInfo: ")` cluttering display output
+## Phase 2: Complete the Core Pipeline (MVP) -- COMPLETE
 
-### 1b. Package structure
-- Add `src/__init__.py`
-- Add `pyproject.toml` for proper Python packaging
-- Remove `pathlib` from requirements.txt (it's a stdlib module)
-- Delete duplicate `src/venv/` directory (keep only root `/venv/`)
-
-### 1c. Data models
-- Create `src/models.py` with dataclasses:
-  - `FileInfo` — replaces the untyped dicts (`filepath`, `filename`, `extension`)
-  - `ExtractionResult` — replaces the result dicts (`success`, `text`, `page_count`, `error`)
-- Update `file_scanner.py` and `text_extractor.py` to use these models
-
-### 1d. Logging
-- Replace all `print()` calls with Python `logging` module
-- Keep console output via a StreamHandler, but now with levels (INFO, ERROR, DEBUG)
-- This prepares us for file logging and structured output later
-
-### 1e. Testing
-- Add `pytest` to requirements.txt
-- Create `tests/` directory with:
-  - `test_file_scanner.py` — test scanning, filtering, recursive walks
-  - `test_models.py` — test dataclass creation/validation
-- Use existing `data/test_messages/` fixtures
-
-### 1f. Security
-- Rotate the Azure Document Intelligence key (it was committed to git history)
-- Add `.env.example` with placeholder values (document what's needed without exposing secrets)
-
-**Deliverable:** Same functionality, zero bugs, proper structure, tests passing.
+Created date_parser.py (with specificity-based scoring), review.py (interactive CLI),
+timeline_builder.py (chronological sorting), docx_exporter.py (Word export with embedded images).
+Added retry with exponential backoff to text_extractor.py. Fixed SSL error handling (OSError catch).
+66 tests passing.
 
 ---
 
-## Phase 2: Complete the Core Pipeline (MVP)
+## Phase 3: Claude Vision Chat Analyzer
 
-**Why second:** This is the product. Without timeline + export, there's nothing to sell.
+**Why next:** This is the biggest value upgrade. Going from "blob of text" to "structured conversation with speakers" transforms the product from a novelty into something a paralegal can actually use. A timeline that shows who said what is fundamentally more useful than one that just dumps OCR text.
 
-### 2a. Date extraction from OCR text
-- Create `src/date_parser.py`
-- Use regex patterns to find common date/time formats in extracted text (screenshot timestamps like "10:42 AM", "Mar 15, 2024", etc.)
-- Return parsed dates or `None` if no date found
+### The Shift
 
-### 2b. User review step
-- Create `src/review.py` — CLI-based review interface
-- For each extracted message: show the text, show the auto-detected date (if any)
-- If no date detected: prompt user to enter one
-- If date detected: let user confirm or override
-- Store confirmed date with each message
+Currently: `1 screenshot -> 1 flat text blob -> 1 Message`
+After:     `1 screenshot -> N structured chat messages with speakers -> N Messages`
 
-### 2c. Timeline builder
-- Create `src/timeline_builder.py`
-- Add `Message` dataclass to `models.py` (text, date, source_file, sender info if available)
-- Add `Timeline` dataclass to `models.py` (sorted list of Messages)
-- Sort messages chronologically by confirmed date
+This ripples through every module downstream of extraction.
 
-### 2d. DOCX export
-- Create `src/docx_exporter.py`
-- Use `python-docx` (already in requirements) to generate formatted document
-- Include: date/time, message text, source filename for reference
-- Output to `output/` directory
+### 3a. New module: `src/chat_analyzer.py`
 
-**Deliverable:** End-to-end pipeline: scan → extract → review dates → build timeline → export DOCX.
+Create a `ChatAnalyzer` class that sends images to the Claude Vision API and gets back structured conversation data.
+
+**How it works:**
+1. Read the image file, base64-encode it
+2. Send to Claude (Sonnet 4.5) with a carefully crafted prompt asking for JSON output
+3. Parse the JSON response into Pydantic-validated dataclasses
+4. Return a list of `ChatMessage` objects
+
+**Key design decisions:**
+- Use the `anthropic` Python SDK directly (no `instructor` wrapper -- we learn more by handling JSON ourselves)
+- Use Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`) for the best cost/quality balance (~$0.005/image)
+- The prompt should ask Claude to:
+  - Identify left-speaker vs right-speaker messages
+  - Extract the exact text of each message
+  - Extract any visible timestamps
+  - Ignore UI chrome (status bar, signal strength, battery, navigation buttons)
+  - Identify system messages separately ("Today", "Read 3:42 PM", etc.)
+- Return structured JSON that we validate with Pydantic
+
+**New file structure:**
+```python
+# src/chat_analyzer.py
+
+class ChatAnalyzer:
+    def __init__(self, api_key: str):
+        """Initialize with Anthropic API key."""
+
+    def analyze_screenshot(self, file_path: Path) -> ChatAnalysisResult:
+        """Send a single screenshot to Claude Vision, get structured messages back."""
+
+    def analyze_files(self, file_list: List[FileInfo]) -> Dict[str, ChatAnalysisResult]:
+        """Process multiple files, with delay between API calls."""
+```
+
+### 3b. Update data models in `src/models.py`
+
+**New dataclasses:**
+- `ChatMessage` -- a single message extracted from a screenshot
+  - `speaker: str` -- "left" or "right" (which side of the screen)
+  - `text: str` -- the message content
+  - `timestamp: Optional[str]` -- visible timestamp if any (raw string from Claude)
+- `ChatAnalysisResult` -- result of analyzing one screenshot
+  - `success: bool`
+  - `messages: List[ChatMessage]` -- the structured messages found
+  - `raw_response: str` -- Claude's raw JSON (for debugging)
+  - `error: str` -- error message if failed
+
+**Updated dataclass:**
+- `Message` -- add `speaker: Optional[str] = None` field
+  - This preserves backward compatibility: old-style flat text Messages have speaker=None
+  - New Claude-extracted Messages have speaker="left" or "right" (user can rename during review)
+
+### 3c. Update `src/review.py` for structured messages
+
+The review step changes significantly:
+
+**Before (flat text):**
+```
+--- Message 1/2 ---
+File: IMG_6019.PNG
+Text: "12:34 254 Do you remember if they owe us..."
+Auto-detected date: 2025-02-23 06:20 PM
+[Enter] to confirm, type a date to override, or 's' to skip:
+```
+
+**After (structured messages):**
+```
+--- Screenshot 1/2: IMG_6019.PNG ---
+Found 4 messages:
+
+  [Right] Do you remember if they owe us this time?
+  [Left]  I don't think so
+  [Left]  Lemme know when you're headed back
+  [Right] Will do
+
+Date detected: Mon, Feb 23 at 6:20 PM
+[Enter] to confirm date, type to override, 's' to skip:
+
+Speaker names — Right is the phone owner. Left is the other person.
+  Right speaker name [Enter for "Speaker 1"]:
+  Left speaker name [Enter for "Speaker 2"]:
+```
+
+**Key changes:**
+- Show all messages from a screenshot grouped together with speaker labels
+- Ask user to name the speakers once per screenshot (or once globally)
+- Date review stays similar but uses Claude's extracted timestamp if available
+- Each `ChatMessage` becomes a separate `Message` in the output list
+
+### 3d. Update `src/main.py` pipeline
+
+- Load `ANTHROPIC_API_KEY` from `.env` (instead of or alongside Azure credentials)
+- Replace `TextExtractor` calls with `ChatAnalyzer` calls
+- Pass `ChatAnalysisResult` objects to the updated `review_extractions()`
+- Keep Azure credentials optional (for future PDF/fallback use)
+
+### 3e. Update `src/docx_exporter.py` for speaker labels
+
+**Before:**
+```
+February 23, 2025  06:20 PM
+Source: IMG_6019.PNG
+[embedded image]
+
+12:34 254 Do you remember if they owe us othestime...
+```
+
+**After:**
+```
+February 23, 2025  06:20 PM
+Source: IMG_6019.PNG
+[embedded image]
+
+Jenna:  Do you remember if they owe us this time?
+Mike:   I don't think so
+Mike:   Lemme know when you're headed back
+Jenna:  Will do
+```
+
+**Changes:**
+- Format each message with speaker label prefix
+- Handle the case where a Message has speaker=None (legacy/fallback)
+- Bold the speaker names for readability
+
+### 3f. Update `src/date_parser.py` role
+
+The date parser becomes a **fallback/validator** rather than the primary date source:
+- Claude extracts timestamps directly from the screenshot (it can read "Mon, Feb 23 at 6:20 PM" in context)
+- `date_parser.py` is used to parse Claude's timestamp strings into datetime objects
+- If Claude doesn't find a timestamp, fall back to running `extract_best_date()` on the concatenated message text
+- Keep all existing tests -- they still validate the fallback path
+
+### 3g. Update dependencies
+
+**`pyproject.toml`:**
+- Add `anthropic` SDK to dependencies
+- Azure dependencies become optional (move to `[project.optional-dependencies]`)
+
+**`.env.example`:**
+- Add `ANTHROPIC_API_KEY=your-key-here`
+- Keep Azure keys documented but mark as optional
+
+### 3h. Testing
+
+- `tests/test_chat_analyzer.py` -- mock the Anthropic API, test JSON parsing, error handling
+- Update `tests/test_review.py` -- test the new structured message review flow
+- Update `tests/test_docx_exporter.py` -- test speaker labels in output
+- Keep all `test_date_parser.py` tests (fallback path)
+
+### 3i. Handle `text_extractor.py`
+
+- Keep the file but don't import it in `main.py` by default
+- It serves as a fallback for non-screenshot files (plain PDFs, scanned documents)
+- Future: could be invoked when ChatAnalyzer detects "this isn't a chat screenshot"
+
+**Deliverable:** Pipeline produces DOCX timelines with speaker-attributed messages. `Jenna: Do you remember...` instead of a flat text dump.
+
+**Verification:**
+- `pytest tests/` passes (all existing + new tests)
+- `timeline data/messages` processes screenshots via Claude Vision
+- Output DOCX shows speaker-labeled messages in chronological order
+- Existing date scoring and review flows still work as fallback
 
 ---
 
-## Phase 3: Audio Transcription
+## Phase 4: Audio Transcription
 
-**Why third:** Extends the pipeline to handle voice messages (audio files), which the user identified as a need.
+**Why next:** Extends the pipeline to handle voice messages (audio files).
 
-### 3a. Azure Speech Services integration
+### 4a. Azure Speech Services integration
 - Create `src/audio_transcriber.py`
-- Add `azure-cognitiveservices-speech` to requirements.txt
-- Add Speech Services credentials to `.env`
+- Add `azure-cognitiveservices-speech` to pyproject.toml
 - Implement transcription for `.mp3`, `.m4a`, `.wav` files
 
-### 3b. Update file scanner
-- Add audio formats to `SUPPORTED_FORMATS` in `file_scanner.py`
-- Categorize files by type (image/document vs audio) so the right extractor is called
+### 4b. Update file scanner
+- Add audio formats to `SUPPORTED_FORMATS`
+- Categorize files by type (image vs audio) for routing
 
-### 3c. Update main pipeline
-- Route audio files to `audio_transcriber` instead of `text_extractor`
-- Merge results into the same review → timeline → export flow
+### 4c. Update main pipeline
+- Route audio files to `audio_transcriber` instead of `chat_analyzer`
+- Merge results into the same review -> timeline -> export flow
 
 **Deliverable:** Full pipeline handles images, PDFs, and audio files.
 
 ---
 
-## Phase 4: SharePoint Online Integration
+## Phase 5: SharePoint Online Integration
 
-**Why fourth:** This is the deployment mechanism, not the core product. The pipeline needs to work first, then we connect it to where the law firm's files live.
+**Why next:** Deployment mechanism for law firms. Pipeline needs to work first.
 
-### 4a. File source abstraction
-- Create `src/file_sources/` package:
-  - `base.py` — abstract `FileSource` class (interface: `list_files()`, `read_file() → BytesIO`)
-  - `local.py` — wraps current `file_scanner.py` logic, reads files from disk
-  - `sharepoint.py` — reads files from SharePoint Online
-- Refactor `text_extractor.py` to accept `BinaryIO` streams instead of file paths (enables in-memory processing from any source)
+### 5a. File source abstraction
+- Create `src/file_sources/` package (base, local, sharepoint)
+- Refactor to accept `BinaryIO` streams instead of file paths
 
-### 4b. SharePoint connector
-- Add `msal` and `office365-rest-python-client` to requirements.txt
-- Implement Service Principal authentication (client credentials flow, no user interaction)
-- Read files into `BytesIO` in-memory (no temp files — important for sensitive legal documents)
-- Add SharePoint credentials to `.env` (tenant_id, client_id, client_secret, site_url)
+### 5b. SharePoint connector
+- `msal` + `office365-rest-python-client` for Service Principal auth
+- Stream files in-memory (no temp files -- sensitive legal documents)
 
-### 4c. Source selection via CLI
-- Extend `argparse` in `main.py`:
-  - `python -m src.main ./local/path` — local directory (existing behavior)
-  - `python -m src.main --sharepoint "/sites/ClientDocs/Shared Documents/CaseName"` — SharePoint path
-- Start with polling (check SharePoint on-demand when run); event-driven later if volume warrants it
+### 5c. Source selection via CLI
+- `timeline ./local/path` (existing)
+- `timeline --sharepoint "/sites/ClientDocs/..."` (new)
 
-**Deliverable:** Pipeline reads from local directories or SharePoint Online, streaming files in-memory.
+**Deliverable:** Pipeline reads from local directories or SharePoint Online.
 
 ---
 
-## Phase 5: Production Hardening
+## Phase 6: Production Hardening
 
-### 5a. Retry logic
-- Add `tenacity` library for retry with exponential backoff on Azure API calls
-- Handle transient failures (network timeouts, rate limits)
+### 6a. Configuration
+- Centralized config (env vars, config file)
+- Model selection, rate limits, output preferences
 
-### 5b. Configuration
-- Move all settings to a config file or environment variables
-- Azure model names, rate-limit delays, output format preferences
-
-### 5c. CI/CD
-- GitHub Actions workflow: lint, test, type-check on push
-- Add `ruff` for linting, `mypy` for type checking
+### 6b. CI/CD
+- GitHub Actions: lint, test, type-check on push
+- `ruff` for linting, `mypy` for type checking
 
 ---
 
@@ -168,29 +276,25 @@ SharePoint Online / Local Dir
 
 | File | Action | Phase |
 |------|--------|-------|
-| `src/file_scanner.py` | Fix bugs, snake_case, use models | 1 |
-| `src/text_extractor.py` | Fix bugs, use models, accept BinaryIO | 1, 4 |
-| `src/main.py` | Update for new models, extend argparse | 1, 4 |
-| `src/models.py` | **Create** — FileInfo, ExtractionResult, Message, Timeline | 1, 2 |
-| `src/__init__.py` | **Create** — empty, enables package imports | 1 |
-| `pyproject.toml` | **Create** — modern Python packaging | 1 |
-| `tests/test_file_scanner.py` | **Create** — pytest tests | 1 |
-| `.env.example` | **Create** — document required env vars | 1 |
-| `src/date_parser.py` | **Create** — extract dates from OCR text | 2 |
-| `src/review.py` | **Create** — CLI review interface | 2 |
-| `src/timeline_builder.py` | **Create** — sort messages, build timeline | 2 |
-| `src/docx_exporter.py` | **Create** — generate DOCX output | 2 |
-| `src/audio_transcriber.py` | **Create** — Azure Speech Services | 3 |
-| `src/file_sources/base.py` | **Create** — FileSource abstraction | 4 |
-| `src/file_sources/local.py` | **Create** — local directory adapter | 4 |
-| `src/file_sources/sharepoint.py` | **Create** — SharePoint Online adapter | 4 |
-| `requirements.txt` | Update each phase | 1-5 |
+| `src/chat_analyzer.py` | **Create** -- Claude Vision integration | 3 |
+| `src/models.py` | Add ChatMessage, ChatAnalysisResult, speaker field on Message | 3 |
+| `src/review.py` | Rewrite for structured message review | 3 |
+| `src/docx_exporter.py` | Add speaker labels to output | 3 |
+| `src/main.py` | Swap TextExtractor for ChatAnalyzer | 3 |
+| `src/date_parser.py` | Keep as fallback, no major changes | 3 |
+| `pyproject.toml` | Add `anthropic`, make Azure optional | 3 |
+| `.env.example` | Add `ANTHROPIC_API_KEY` | 3 |
+| `tests/test_chat_analyzer.py` | **Create** -- mock API tests | 3 |
+| `tests/test_review.py` | Update for structured messages | 3 |
+| `tests/test_docx_exporter.py` | Update for speaker labels | 3 |
+| `src/audio_transcriber.py` | **Create** -- Azure Speech Services | 4 |
+| `src/file_sources/base.py` | **Create** -- FileSource abstraction | 5 |
+| `src/file_sources/local.py` | **Create** -- local directory adapter | 5 |
+| `src/file_sources/sharepoint.py` | **Create** -- SharePoint Online adapter | 5 |
 
 ## Verification
 
-After each phase, verify by:
-- **Phase 1:** `pytest tests/` passes. `python -m src.main` runs against `data/test_image_messages/` with no errors. No bugs in code.
-- **Phase 2:** Full pipeline produces a `.docx` file in `output/` from test images with correctly ordered messages.
-- **Phase 3:** Pipeline processes a test audio file and includes transcription in timeline output.
-- **Phase 4:** Pipeline reads files from a SharePoint test site and produces the same output as local files.
-- **Phase 5:** CI/CD pipeline runs on push, retry logic handles simulated failures.
+- **Phase 3:** `pytest tests/` passes. `timeline data/messages` produces a DOCX with speaker-labeled messages via Claude Vision. Review step shows structured messages with speaker names.
+- **Phase 4:** Pipeline processes audio files and includes transcriptions in timeline.
+- **Phase 5:** Pipeline reads from SharePoint and produces identical output to local files.
+- **Phase 6:** CI/CD runs on push, config is externalized.
