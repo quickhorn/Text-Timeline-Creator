@@ -1,7 +1,8 @@
 """
 Text Message Timeline Generator
 
-Main application file that processes message files and creates a timeline.
+Main application file that processes message screenshots into a
+speaker-attributed chronological timeline.
 """
 
 import os
@@ -10,7 +11,8 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from src.file_scanner import scan_message_directory, display_files_found
-from src.review import review_extractions
+from src.chat_analyzer import ChatAnalyzer
+from src.review import review_analyses
 from src.timeline_builder import build_timeline
 from src.docx_exporter import export_timeline
 
@@ -24,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     """
-    Main application entry point
+    Main application entry point.
+
+    Pipeline: scan files -> analyze with Claude Vision -> review -> build timeline -> export DOCX
     """
 
     logger.info("=" * 70)
@@ -33,17 +37,15 @@ def main():
 
     load_dotenv()
 
-    endpoint = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
-    key = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
 
-    if not endpoint or not key:
-        logger.error("Azure credentials not found!")
+    if not api_key:
+        logger.error("Anthropic API key not found!")
         logger.error("Please check your .env file contains:")
-        logger.error("  AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=...")
-        logger.error("  AZURE_DOCUMENT_INTELLIGENCE_KEY=...")
+        logger.error("  ANTHROPIC_API_KEY=your-key-here")
         return
 
-    logger.info("Azure credentials loaded successfully!")
+    logger.info("Anthropic API key loaded successfully!")
 
     parser = argparse.ArgumentParser(description="Text Message Timeline Generator")
     parser.add_argument(
@@ -73,22 +75,22 @@ def main():
         logger.warning(f"Please ensure you have message files in: {messages_dir}")
         return
 
-    # Extract text from the message files using Azure OCR
-    extractor = TextExtractor(endpoint, key)
-    results = extractor.extract_text_from_files(message_files)
+    # Analyze screenshots with Claude Vision
+    analyzer = ChatAnalyzer(api_key)
+    results = analyzer.analyze_files(message_files)
 
     # Report results
     successful = sum(1 for r in results.values() if r.success)
     failed = len(results) - successful
 
     if successful == 0:
-        logger.warning("No text was successfully extracted from any files.")
+        logger.warning("No screenshots were successfully analyzed.")
         return
 
-    logger.info(f"Extracted text from {successful} file(s) ({failed} failed)")
+    logger.info(f"Analyzed {successful} screenshot(s) ({failed} failed)")
 
-    # Review dates with user
-    messages = review_extractions(results, message_files)
+    # Review messages, dates, and speaker names with user
+    messages = review_analyses(results, message_files)
 
     if not messages:
         logger.warning("No messages to build a timeline from.")
