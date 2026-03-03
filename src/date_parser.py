@@ -4,9 +4,13 @@ Date Parser Module
 Extracts dates and times from OCR-extracted text using the dateparser library.
 Handles absolute dates ("Mar 15, 2024"), relative dates ("Yesterday"),
 and time-only values ("10:42 AM").
+
+When multiple dates are found, extract_best_date ranks them by specificity:
+a full "Mon, Feb 23 at 6:20 PM" beats a bare "12:34" from a phone status bar.
 """
 
 import logging
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -87,11 +91,64 @@ def _is_valid_date_match(original_text: str) -> bool:
     return False
 
 
+MONTH_NAMES = {
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+    'january', 'february', 'march', 'april',
+    'june', 'july', 'august', 'september',
+    'october', 'november', 'december',
+}
+
+DAY_OF_WEEK_NAMES = {
+    'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
+    'monday', 'tuesday', 'wednesday', 'thursday',
+    'friday', 'saturday', 'sunday',
+}
+
+# Matches a 4-digit year (1900-2099)
+_YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
+
+# Matches a bare time like "12:34" or "6:20 PM" — used to detect time-only matches
+_TIME_ONLY_PATTERN = re.compile(
+    r'^\d{1,2}:\d{2}(\s*[AaPp][Mm])?$'
+)
+
+
+def _score_date_match(match: DateMatch) -> int:
+    """
+    Score a date match by how specific the original text is.
+
+    Higher scores mean more date information was present in the original text.
+    A bare time like "12:34" scores 1; a full "Mon, Feb 23 at 6:20 PM" scores 6+.
+    """
+    text = match.original_text.strip().lower()
+    score = 1  # base score for any valid match
+
+    # Year present (e.g., "2024") — strongest signal
+    if _YEAR_PATTERN.search(text):
+        score += 4
+
+    # Month name present (e.g., "Feb", "March")
+    words = re.findall(r'[a-z]+', text)
+    if any(w in MONTH_NAMES for w in words):
+        score += 3
+
+    # Day-of-week present (e.g., "Mon", "Tuesday")
+    if any(w in DAY_OF_WEEK_NAMES for w in words):
+        score += 2
+
+    # Relative date words (e.g., "Yesterday", "Today")
+    if any(w in RELATIVE_DATE_WORDS for w in words):
+        score += 2
+
+    return score
+
+
 def extract_best_date(text: str) -> Optional[datetime]:
     """
     Extract the single most likely date/time from text.
 
-    Convenience wrapper around extract_dates that returns just the first match.
+    Ranks all matches by specificity — a full date beats a bare time.
     Returns None if no date is found.
 
     Args:
@@ -104,4 +161,10 @@ def extract_best_date(text: str) -> Optional[datetime]:
     if not matches:
         logger.debug("No dates found in text")
         return None
-    return matches[0].parsed_date
+
+    best = max(matches, key=_score_date_match)
+    logger.debug(
+        f"Best date: '{best.original_text}' (score={_score_date_match(best)}) "
+        f"-> {best.parsed_date}"
+    )
+    return best.parsed_date

@@ -2,6 +2,7 @@
 Text Extraction Module
 
 Handles extracting text from images and PDFs using Azure Document Intelligence.
+Includes retry with exponential backoff for transient API failures.
 """
 
 import os
@@ -9,12 +10,22 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import HttpResponseError
 from azure.ai.formrecognizer import DocumentAnalysisClient
 import time
 
 from src.models import FileInfo, ExtractionResult
 
 logger = logging.getLogger(__name__)
+
+# Retry settings for transient Azure API failures
+MAX_RETRIES = 3          # Total attempts = MAX_RETRIES + 1
+INITIAL_RETRY_DELAY = 2  # Seconds before first retry
+BACKOFF_MULTIPLIER = 2   # Each retry waits 2x longer
+
+# Delay between processing files (seconds) — be gentle on the rate limit
+BETWEEN_FILE_DELAY = 1.5
+
 
 class TextExtractor:
     """
@@ -44,43 +55,62 @@ class TextExtractor:
         """
         Extract text from a file (image or PDF) using Azure Document Intelligence.
 
+        Retries up to MAX_RETRIES times with exponential backoff on transient
+        failures (connection errors, rate limits). Does NOT retry on file-not-found.
+
         Args:
             file_path: Path to the file to extract text from
 
         Returns:
             ExtractionResult with success status, extracted text, page count, and any error
         """
-        try:
-            logger.info(f"Processing: {file_path}")
+        logger.info(f"Processing: {file_path}")
 
-            with open(file_path, 'rb') as file:
-                #Send to Azure for analysis
-                #We use a "prebuilt-read" module which is optimized for text extraction
-                poller = self.client.begin_analyze_document(
-                    "prebuilt-read",
-                    document=file
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                with open(file_path, 'rb') as file:
+                    poller = self.client.begin_analyze_document(
+                        "prebuilt-read",
+                        document=file
+                    )
+                    analysis_result = poller.result()
+
+                full_text = analysis_result.content
+                page_count = len(analysis_result.pages)
+
+                logger.info(f"Success: {page_count} page(s), {len(full_text)} characters")
+                return ExtractionResult(
+                    success=True,
+                    text=full_text,
+                    page_count=page_count
                 )
 
-                analysis_result = poller.result()
+            except FileNotFoundError:
+                # Not transient — don't retry
+                error_msg = f"File not found: {file_path}"
+                logger.error(error_msg)
+                return ExtractionResult(success=False, error=error_msg)
 
-            full_text = analysis_result.content
-            page_count = len(analysis_result.pages)
+            except (OSError, HttpResponseError) as e:
+                delay = INITIAL_RETRY_DELAY * (BACKOFF_MULTIPLIER ** attempt)
+                if attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{MAX_RETRIES + 1} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    error_msg = (
+                        f"Failed after {MAX_RETRIES + 1} attempts: {e}"
+                    )
+                    logger.error(error_msg)
+                    return ExtractionResult(success=False, error=error_msg)
 
-            logger.info(f"Success: {page_count} page(s), {len(full_text)} characters")
-            return ExtractionResult(
-                success=True,
-                text=full_text,
-                page_count=page_count
-            )
-        except FileNotFoundError:
-            error_msg = f"File not found: {file_path}"
-            logger.error(error_msg)
-            return ExtractionResult(success=False, error=error_msg)
-
-        except Exception as e:
-            error_msg = f"Error processing file: {str(e)}"
-            logger.error(error_msg)
-            return ExtractionResult(success=False, error=error_msg)
+            except Exception as e:
+                # Unknown error — don't retry
+                error_msg = f"Error processing file: {str(e)}"
+                logger.error(error_msg)
+                return ExtractionResult(success=False, error=error_msg)
 
     def extract_text_from_files(self, file_list: List[FileInfo]) -> Dict[str, ExtractionResult]:
         """
@@ -107,9 +137,9 @@ class TextExtractor:
             #store result with filename as key
             results[file_info.filename] = extraction_result
 
-            #small delay to avoid hitting API rate limits
+            # Delay between files to avoid hitting API rate limits
             if index < total_files:
-                time.sleep(0.7)
+                time.sleep(BETWEEN_FILE_DELAY)
 
         successful = sum(1 for r in results.values() if r.success)
         failed = total_files - successful

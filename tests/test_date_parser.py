@@ -3,7 +3,9 @@ Tests for the date parser module.
 """
 
 from datetime import datetime
-from src.date_parser import extract_dates, extract_best_date, _is_valid_date_match
+from src.date_parser import (
+    extract_dates, extract_best_date, _is_valid_date_match, _score_date_match,
+)
 from src.models import DateMatch
 
 
@@ -70,6 +72,45 @@ class TestExtractDates:
             assert m.original_text.strip().lower() != "are"
 
 
+class TestScoreDateMatch:
+    """Tests for _score_date_match ranking function."""
+
+    def test_bare_time_scores_lowest(self):
+        """A bare time like '12:34' should score just 1 (base)."""
+        match = DateMatch(original_text="12:34", parsed_date=datetime.now())
+        assert _score_date_match(match) == 1
+
+    def test_day_of_week_plus_time_scores_higher(self):
+        """'Tuesday 6:28 PM' has a day-of-week, so it should beat bare time."""
+        bare = DateMatch(original_text="12:34", parsed_date=datetime.now())
+        dow = DateMatch(original_text="Tuesday 6:28 PM", parsed_date=datetime.now())
+        assert _score_date_match(dow) > _score_date_match(bare)
+
+    def test_full_date_scores_highest(self):
+        """'Mon, Feb 23 at 6:20 PM' has day-of-week + month + digits."""
+        full = DateMatch(
+            original_text="Mon, Feb 23 at 6:20 PM", parsed_date=datetime.now()
+        )
+        bare = DateMatch(original_text="12:34", parsed_date=datetime.now())
+        assert _score_date_match(full) > _score_date_match(bare)
+
+    def test_year_boosts_score(self):
+        """A date with an explicit year should score very high."""
+        with_year = DateMatch(
+            original_text="Mar 15, 2024", parsed_date=datetime(2024, 3, 15)
+        )
+        without_year = DateMatch(
+            original_text="Mar 15", parsed_date=datetime.now()
+        )
+        assert _score_date_match(with_year) > _score_date_match(without_year)
+
+    def test_relative_date_scores_above_bare_time(self):
+        """'Yesterday' should score higher than '12:34'."""
+        yesterday = DateMatch(original_text="Yesterday", parsed_date=datetime.now())
+        bare = DateMatch(original_text="12:34", parsed_date=datetime.now())
+        assert _score_date_match(yesterday) > _score_date_match(bare)
+
+
 class TestExtractBestDate:
     """Tests for extract_best_date convenience function."""
 
@@ -85,6 +126,29 @@ class TestExtractBestDate:
     def test_returns_none_for_empty_string(self):
         result = extract_best_date("")
         assert result is None
+
+    def test_prefers_full_date_over_bare_time(self):
+        """The exact bug: '12:34' appears before 'Mon, Feb 23 at 6:20 PM' in OCR text.
+        extract_best_date should pick the full date, not the status bar clock."""
+        ocr_text = (
+            "12:34\n254\nDo you remember if they owe\n"
+            "us othestime?\n<\n78\nI don't think so\n"
+            "Jenna > Mon, Feb 23 at 6:20 PM\n"
+            "Tuesday 6:28 PM\n"
+            "Lemme know when you're headed back"
+        )
+        result = extract_best_date(ocr_text)
+        assert result is not None
+        assert result.month == 2
+        assert result.day == 23
+
+    def test_prefers_month_date_over_bare_time(self):
+        """A date with a month name should win over a bare time."""
+        text = "12:34\nSome random text in between\nMar 15 at noon"
+        result = extract_best_date(text)
+        assert result is not None
+        assert result.month == 3
+        assert result.day == 15
 
 
 class TestIsValidDateMatch:
