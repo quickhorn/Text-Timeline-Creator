@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 EMBEDDABLE_FORMATS = {'.jpg', '.jpeg', '.png'}
 
 # Max image width in the document (inches)
-IMAGE_WIDTH = Inches(5)
+IMAGE_WIDTH = Inches(1.25)
 
 
 def export_timeline(timeline: Timeline, output_dir: Path) -> Path:

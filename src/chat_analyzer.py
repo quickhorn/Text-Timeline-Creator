@@ -3,6 +3,8 @@ Chat Analyzer Module
 
 Sends messaging screenshots to Claude Vision API and gets back structured
 conversation data with speaker identification and message text.
+
+Uses Anthropic's tool_use feature to guarantee valid JSON output.
 """
 
 import base64
@@ -51,13 +53,43 @@ Rules:
 - Ignore read receipts ("Read 3:42 PM") and delivery indicators
 - Order messages from top to bottom as they appear on screen (chronological within the screenshot)
 
-Return ONLY valid JSON in this exact format, with no other text:
-{
-    "messages": [
-        {"speaker": "left", "text": "message text here", "timestamp": "visible timestamp or null"},
-        {"speaker": "right", "text": "message text here", "timestamp": null}
-    ]
-}"""
+Use the extract_messages tool to return your results."""
+
+# Tool definition that forces Claude to return structured JSON.
+# The API guarantees valid JSON matching this schema — no parsing errors,
+# no unescaped quotes, no markdown fences.
+EXTRACT_MESSAGES_TOOL = {
+    "name": "extract_messages",
+    "description": "Extract structured chat messages from a screenshot",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "messages": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "speaker": {
+                            "type": "string",
+                            "enum": ["left", "right"],
+                            "description": "Which side of the screen the message bubble appears on",
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "The exact text content of the message",
+                        },
+                        "timestamp": {
+                            "type": "string",
+                            "description": "Visible timestamp near the message, if any",
+                        },
+                    },
+                    "required": ["speaker", "text"],
+                },
+            },
+        },
+        "required": ["messages"],
+    },
+}
 
 
 class ChatAnalyzer:
@@ -81,6 +113,8 @@ class ChatAnalyzer:
     def analyze_screenshot(self, file_path: Path) -> ChatAnalysisResult:
         """
         Send a single screenshot to Claude Vision and get structured messages back.
+
+        Uses tool_use to guarantee valid JSON output from the API.
 
         Retries up to MAX_RETRIES times with exponential backoff on transient
         failures (connection errors, rate limits). Does NOT retry on file-not-found
@@ -121,6 +155,8 @@ class ChatAnalyzer:
                     model=MODEL,
                     max_tokens=4096,
                     system=SYSTEM_PROMPT,
+                    tools=[EXTRACT_MESSAGES_TOOL],
+                    tool_choice={"type": "tool", "name": "extract_messages"},
                     messages=[
                         {
                             "role": "user",
@@ -142,8 +178,19 @@ class ChatAnalyzer:
                     ],
                 )
 
-                raw_text = response.content[0].text
-                return self._parse_response(raw_text, file_path.name)
+                # Find the tool_use block in the response
+                tool_use_block = next(
+                    (b for b in response.content if b.type == "tool_use"),
+                    None,
+                )
+
+                if not tool_use_block:
+                    error_msg = f"No tool_use block in response for {file_path.name}"
+                    logger.error(error_msg)
+                    return ChatAnalysisResult(success=False, error=error_msg)
+
+                # tool_use_block.input is already a parsed dict — no JSON parsing needed
+                return self._parse_tool_result(tool_use_block.input, file_path.name)
 
             except anthropic.APIConnectionError as e:
                 # Network-level failure — retry
@@ -240,40 +287,71 @@ class ChatAnalyzer:
 
         return results
 
-    def _parse_response(
-        self, raw_text: str, filename: str
+    def _parse_tool_result(
+        self, data: dict, filename: str
     ) -> ChatAnalysisResult:
         """
-        Parse Claude's JSON response into ChatMessage objects.
+        Convert the tool_use result dict into ChatMessage objects.
+
+        The API guarantees valid JSON matching our schema, so we only need
+        to validate the content and build our dataclasses.
 
         Args:
-            raw_text: The raw text from Claude's response
+            data: Parsed dict from tool_use_block.input
             filename: Source filename (for logging)
 
         Returns:
-            ChatAnalysisResult with parsed messages or error
+            ChatAnalysisResult with parsed messages
         """
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError as e:
-            error_msg = f"Invalid JSON from Claude for {filename}: {e}"
-            logger.error(error_msg)
-            return ChatAnalysisResult(
-                success=False, raw_response=raw_text, error=error_msg
-            )
+        raw_response = json.dumps(data)
 
         if "messages" not in data:
-            error_msg = f"Missing 'messages' key in Claude response for {filename}"
+            error_msg = f"Missing 'messages' key in tool result for {filename}"
             logger.error(error_msg)
             return ChatAnalysisResult(
-                success=False, raw_response=raw_text, error=error_msg
+                success=False, raw_response=raw_response, error=error_msg
+            )
+
+        # The API sometimes returns messages as a JSON string instead of a list
+        raw_messages = data["messages"]
+        if isinstance(raw_messages, str):
+            try:
+                raw_messages = json.loads(raw_messages)
+                logger.info(f"Parsed messages string into list for {filename}")
+            except json.JSONDecodeError:
+                # Can't parse — return the raw text as a single message
+                # so the user can still date the screenshot and include the image
+                logger.warning(f"Could not parse messages for {filename}, returning raw text")
+                return ChatAnalysisResult(
+                    success=True,
+                    messages=[ChatMessage(speaker="unknown", text=raw_messages)],
+                    raw_response=raw_response,
+                )
+
+        if not isinstance(raw_messages, list):
+            # Unexpected type — wrap whatever str() gives us as a single message
+            logger.warning(f"Unexpected messages type for {filename}, returning raw text")
+            return ChatAnalysisResult(
+                success=True,
+                messages=[ChatMessage(speaker="unknown", text=str(raw_messages))],
+                raw_response=raw_response,
             )
 
         messages = []
-        for item in data["messages"]:
-            speaker = item.get("speaker", "unknown")
-            text = item.get("text", "")
-            timestamp = item.get("timestamp")
+        salvaged = 0
+        for item in raw_messages:
+            if isinstance(item, dict):
+                speaker = item.get("speaker", "unknown")
+                text = item.get("text", "")
+                timestamp = item.get("timestamp")
+            elif isinstance(item, str) and item.strip():
+                # Claude returned a bare string — treat as message text
+                speaker = "unknown"
+                text = item
+                timestamp = None
+                salvaged += 1
+            else:
+                continue
 
             if not text.strip():
                 continue
@@ -282,10 +360,15 @@ class ChatAnalyzer:
                 ChatMessage(speaker=speaker, text=text, timestamp=timestamp)
             )
 
+        if salvaged:
+            logger.info(
+                f"Salvaged {salvaged} bare-string item(s) from {filename}"
+            )
+
         logger.info(
             f"Parsed {len(messages)} message(s) from {filename}"
         )
 
         return ChatAnalysisResult(
-            success=True, messages=messages, raw_response=raw_text
+            success=True, messages=messages, raw_response=raw_response
         )
