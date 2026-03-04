@@ -6,26 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Text Message Timeline Generator — a Python pipeline that scans directories for message screenshots and PDFs, extracts text via Azure Document Intelligence OCR, and (planned) assembles them into a chronological timeline. The project is in early development; file scanning and text extraction work, but timeline assembly and export are not yet implemented.
 
-## Learning Mode
-
-### BEFORE WRITING CODE
-
-- Explain what you're about to do *and why*
-- Break it down into steps I can follow
-- Wait for my OK before preceding
-
-### AFTER WRITING CODE
-
-- Explain what each part does
-- Ask me 3 questions about your explanation
-- If I get the answer wrong, explain it again until I get it right
-- Don't let me check in until I answer your questions correctly
-
-### GENERAL RULES
-
-- Be direct. Tell me when I'm doing something wrong, or could simplify or modernize.
-- Treat every session as a learning opportunity.
-
 ## Commands
 
 ```bash
